@@ -19,6 +19,7 @@ def layer_linear(inputs, shape, scope='linear_layer'):
     with tf.variable_scope(scope):
         w = tf.get_variable('w',shape)
         b = tf.get_variable('b',shape[-1:])
+        a = 1
     return tf.matmul(inputs,w) + b
 
 def layer_softmax(inputs, shape, scope='softmax_layer'):
