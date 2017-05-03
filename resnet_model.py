@@ -62,9 +62,6 @@ class ResNet(object):
     """Build a whole graph for the model."""
     self.global_step = tf.contrib.framework.get_or_create_global_step()
     self._build_paral_model()
-    #self._build_vggmodel()
-    #self._build_small_bench_resnet()
-    #self._build_violent_resnet()
     if self.mode == 'train':
       self._build_train_op()
     self.summaries = tf.summary.merge_all()
@@ -73,81 +70,6 @@ class ResNet(object):
     """Map a stride scalar to the stride array for tf.nn.conv2d."""
     return [1, stride, stride, 1]
 
-  def _build_model(self):
-    """Build the core model within the graph."""
-    with tf.variable_scope('init'):
-      x = self._images
-      x = self._conv('init_conv', x, 3, 3, 16, self._stride_arr(1))
-    strides = [1, 2, 2]
-    activate_before_residual = [True, False, False]
-    if self.hps.use_bottleneck:
-      res_func = self._bottleneck_residual
-      filters = [16, 64, 128, 256]
-    else:
-      res_func_norm = self._residual
-      res_func = self._residual_conv_mask
-      #res_func = self._residual_viol_mask
-      filters = [16, 16, 32, 64]
-      # Uncomment the following codes to use w28-10 wide residual network.
-      # It is more memory efficient than very deep residual network and has
-      # comparably good performance.
-      # https://arxiv.org/pdf/1605.07146v1.pdf
-      #filters = [16, 160, 320, 640]
-      # Update hps.num_residual_units to 9
-    count = 0
-    with tf.variable_scope('unit_1_0'):
-      x,mask_loss = res_func(x, filters[0], filters[1], self._stride_arr(strides[0]),
-                   activate_before_residual[0])
-      self.mask_loss = mask_loss
-      count = count + 1
-    for i in six.moves.range(1, self.hps.num_residual_units):
-      with tf.variable_scope('unit_1_%d' % i):
-        x,mask_loss = res_func(x, filters[1], filters[1], self._stride_arr(1), False)
-        self.mask_loss += mask_loss
-        count = count + 1
-    with tf.variable_scope('unit_2_0'):
-      x,mask_loss = res_func(x, filters[1], filters[2], self._stride_arr(strides[1]),
-                   activate_before_residual[1])
-      self.mask_loss += mask_loss
-      count = count + 1
-    for i in six.moves.range(1, self.hps.num_residual_units):
-      with tf.variable_scope('unit_2_%d' % i):
-        x,mask_loss = res_func(x, filters[2], filters[2], self._stride_arr(1), False)
-        self.mask_loss += mask_loss
-        count = count + 1
-    
-    with tf.variable_scope('unit_3_0'):
-      x,mask_loss = res_func(x, filters[2], filters[3], self._stride_arr(strides[2]),
-                   activate_before_residual[2])
-      self.mask_loss += mask_loss
-      count = count + 1
-    for i in six.moves.range(1, self.hps.num_residual_units):
-      with tf.variable_scope('unit_3_%d' % i):
-        x,mask_loss = res_func(x, filters[3], filters[3], self._stride_arr(1), False)
-        self.mask_loss += mask_loss
-        count = count + 1      
-    
-    with tf.variable_scope('unit_last'):
-      x = self._batch_norm('final_bn', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._global_avg_pool(x)
-
-    with tf.variable_scope('logit'):
-      logits = self._fully_connected(x, self.hps.num_classes)
-      self.predictions = tf.nn.softmax(logits)
-      
-    self.mask_loss = self.mask_loss/count
-    
-    with tf.variable_scope('costs'):
-      xent = tf.nn.softmax_cross_entropy_with_logits(
-          logits=logits, labels=self.labels)
-      self.cost = tf.reduce_mean(xent, name='xent')
-      #tf.summary.histogram('predictions_sum',tf.pow(2.0, -xent))
-      self.cost += self._decay()
-      self.cost += self.mask_loss
-      tf.summary.scalar('cost', self.cost)
-      
-    #tf.identity(self.cost, name='loss_by_example')
   
   def _build_paral_model(self):
     """Build the core model within the graph."""
@@ -313,110 +235,7 @@ class ResNet(object):
       self.cost += self.mask_loss
       tf.summary.scalar('cost', self.cost)
     tf.identity(self.cost, name='loss_by_example')
-    
-  def _build_small_bench_resnet(self):
-    """Build the core model within the graph."""
-    with tf.variable_scope('init'):
-      x = self._images
-      x = self._conv('init_conv', x, 3, 3, 16, self._stride_arr(1))
-    self.mask_loss = tf.constant(0.0)
-    strides = [1, 2, 2]
-    activate_before_residual = [True, False, False]
-    if self.hps.use_bottleneck:
-      res_func = self._bottleneck_residual
-      filters = [16, 64, 128, 256]
-    else:
-      #res_func = self._residual
-      res_func = self._residual
-      filters = [16, 16, 32, 64]
-      #x_init = x
-      # Uncomment the following codes to use w28-10 wide residual network.
-      # It is more memory efficient than very deep residual network and has
-      # comparably good performance.
-      # https://arxiv.org/pdf/1605.07146v1.pdf
-      #filters = [16, 160, 320, 640]
-      # Update hps.num_residual_units to 9
-    with tf.variable_scope('unit_1_0'):
-      x = res_func(x, filters[0], filters[1], self._stride_arr(strides[0]),
-                   activate_before_residual[0])
-    with tf.variable_scope('unit_2_0'):
-      x= res_func(x, filters[1], filters[2], self._stride_arr(strides[1]),
-                   activate_before_residual[1])
-    with tf.variable_scope('unit_3_0'):
-      x = res_func(x, filters[2], filters[3], self._stride_arr(strides[2]),
-                   activate_before_residual[2])
-      
-    with tf.variable_scope('unit_last'):
-      x = self._batch_norm('final_bn', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._global_avg_pool(x)
 
-    #self.mask_loss = self.mask_loss/3 
-    with tf.variable_scope('logit'):
-      logits = self._fully_connected(x, self.hps.num_classes)
-      self.predictions = tf.nn.softmax(logits)
-
-    with tf.variable_scope('costs'):
-      xent = tf.nn.softmax_cross_entropy_with_logits(
-          logits=logits, labels=self.labels)
-      self.cost = tf.reduce_mean(xent, name='xent')
-      tf.summary.histogram('predictions_sum',tf.pow(2.0, -xent))
-      self.cost += self._decay()
-      tf.summary.scalar('cost', self.cost)
-      
-  def _build_vggmodel(self):
-    """Build the core model within the graph."""
-    with tf.variable_scope('init'):
-      x = self._images
-          
-    params = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1', 'conv3_2', 'conv3_3', 'conv4_1', 'conv4_2', \
-               'conv4_3', 'conv5_1', 'conv5_2', 'conv5_3']
-    num_filters = [64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512, 512]
-    input_channels = [3, 64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512]
-    is_pool = [False,True,False,True,False,False,True,False,False,True,False,False,True]
-    strides = [1,2,1,2,1,1,2,1,1,2,1,1,2]
-    num_conv_layer = 2 #init: 13
-    count = 0
-    self.mask_loss = tf.constant(0.0)
-    
-    with tf.variable_scope(params[0]):
-        x = self._conv('conv', x, filter_size=3, in_filters=input_channels[0], out_filters=num_filters[0], strides=[1,1,1,1])
-        #init_x = x
-        x = self._batch_norm('bn',x)
-        x = self._relu(x, self.hps.relu_leakiness)
-        if is_pool[0]:
-            x = tf.nn.max_pool(x,ksize=[1, 2, 2, 1],strides = [1, 2, 2, 1], padding='SAME')   
-    for i in six.moves.range(1, num_conv_layer):
-        with tf.variable_scope(params[i]):
-          x = self._conv('conv', x, filter_size=3, in_filters=input_channels[i], out_filters=num_filters[i], strides=[1,1,1,1])
-          #x, mask_loss = self._mlid_mask(init_x, x, self.slope_tensor, 'mask', stride=strides[i-1])
-          #self.mask_loss += mask_loss
-          count = count + 1
-          #init_x = x
-          x = self._batch_norm('bn',x)
-          x = self._relu(x, self.hps.relu_leakiness)
-          if is_pool[i]:
-            x = tf.nn.max_pool(x,ksize=[1, 2, 2, 1],strides = [1, 2, 2, 1], padding='SAME')            
-    
-    with tf.variable_scope('fc1'):
-      x =  self._fully_connected(x, 4096)
-      #x = self._batch_norm('bn_fc_1',x)
-      x = tf.nn.dropout(x, 0.50)
-    
-    x = self._fully_connected_v2(x,'fc2', 4096)
-    x = tf.nn.dropout(x, 0.50)
-    logits =  self._fully_connected_v2(x,'fc3', self.hps.num_classes)
-
-    self.predictions = tf.nn.softmax(logits)
-    #self.mask_loss = self.mask_loss/count
-    
-    with tf.variable_scope('costs'):
-      xent = tf.nn.softmax_cross_entropy_with_logits(
-          logits=logits, labels=self.labels)
-      self.cost = tf.reduce_mean(xent, name='xent')
-      self.cost += self._decay()
-      #self.cost += self.mask_loss
-      tf.summary.scalar('cost', self.cost)
 
   def _build_train_op(self):
     """Build training specific ops for the graph."""
@@ -571,106 +390,6 @@ class ResNet(object):
     tf.logging.debug('image after unit %s', x.get_shape())
     return x
   
-  def _residual_mask_v2(self, x, in_filter, out_filter, stride,
-                activate_before_residual=False):
-    """Residual unit with 2 sub layers."""
-    if activate_before_residual:
-      with tf.variable_scope('shared_activation'):
-        x = self._batch_norm('init_bn', x)
-        init_x = x
-        x = self._relu(x, self.hps.relu_leakiness)
-        orig_x = x
-    else:
-      with tf.variable_scope('residual_only_activation'):
-        orig_x = x
-        x = self._batch_norm('init_bn', x)
-        init_x = x
-        x = self._relu(x, self.hps.relu_leakiness)
-
-    with tf.variable_scope('sub1'):
-      x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
-
-    with tf.variable_scope('sub2'):
-      x = self._batch_norm('bn2', x)
-      x, mask_loss = self._mlid_mask(init_x, x, self.slope_tensor, 'mask')
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._conv('conv2', x, 3, out_filter, out_filter, [1, 1, 1, 1])
-
-    with tf.variable_scope('sub_add'):
-      if in_filter != out_filter:
-        orig_x = tf.nn.avg_pool(orig_x, stride, stride, 'VALID')
-        orig_x = tf.pad(
-            orig_x, [[0, 0], [0, 0], [0, 0],
-                     [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-      x += orig_x
-
-    tf.logging.debug('image after unit %s', x.get_shape())
-    return x, mask_loss
-  
-  def _residual_mask_v3(self, x, in_filter, out_filter, stride,
-                activate_before_residual=False):
-    """Residual unit with 2 sub layers."""
-    if activate_before_residual:
-      with tf.variable_scope('shared_activation'):
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-        orig_x = x
-        init_x = x
-    else:
-      with tf.variable_scope('residual_only_activation'):
-        orig_x = x
-        init_x = x
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-
-    with tf.variable_scope('sub1'):
-      x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
-      x, mask_loss1 = self._mlid_mask(init_x, x, self.slope_tensor, 'mask1', True, stride[1])
-      init_x = x
-      
-    with tf.variable_scope('sub2'):
-      x = self._batch_norm('bn2', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._conv('conv2', x, 3, out_filter, out_filter, [1, 1, 1, 1])
-      x, mask_loss2 = self._mlid_mask(init_x, x, self.slope_tensor, 'mask2', True, 1)
-
-    tf.logging.debug('image after unit %s', x.get_shape())
-    return x, mask_loss1 + mask_loss2
-
-  def _residual_conv_mask(self, x, in_filter, out_filter, stride,
-                activate_before_residual=False):
-    """Residual unit with 2 sub layers."""
-    if activate_before_residual:
-      with tf.variable_scope('shared_activation'):
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-        init_x = x
-        orig_x = x
-    else:
-      with tf.variable_scope('residual_only_activation'):
-        orig_x = x
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-        init_x = x
-    with tf.variable_scope('sub1'):
-      x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
-
-    with tf.variable_scope('sub2'):
-      x = self._batch_norm('bn2', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x, mask_loss = self._conv_mlid_mask(init_x, x, self.slope_tensor, 'mask', append_input=False, stride = stride[1])
-      x = self._conv('conv2', x, 3, out_filter, out_filter, [1, 1, 1, 1])
-
-    with tf.variable_scope('sub_add'):
-      if in_filter != out_filter:
-        orig_x = tf.nn.avg_pool(orig_x, stride, stride, 'VALID')
-        orig_x = tf.pad(
-            orig_x, [[0, 0], [0, 0], [0, 0],
-                     [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-      x += orig_x
-
-    tf.logging.debug('image after unit %s', x.get_shape())
-    return x, mask_loss
 
   def _residual_para_mask(self, x, in_filter, out_filter, stride,
                 mask,activate_before_residual=False):
@@ -754,76 +473,7 @@ class ResNet(object):
 
     tf.logging.debug('image after unit %s', x.get_shape())
     return x, mask_loss
- 
 
-  def _violent_mask(self, in_data, out_data, slope_tensor, stride,name_scope):
-    
-    a = in_data.get_shape().as_list()[1]
-    b = in_data.get_shape().as_list()[2]
-    if in_data.get_shape()[3].value >= 256:
-        stride_0 = a
-        stride_1 = b
-    elif in_data.get_shape()[3].value >= 64:
-        stride_0 = a/2
-        stride_1 = b/2
-    else:
-        stride_0 = a/4
-        stride_1 = b/4
-    pooled_in_data = tf.nn.max_pool(in_data,ksize=[1, stride_0, stride_1, 1],strides = [1, stride_0, stride_1, 1], padding='VALID')  
-    pooled_in_data = self._batch_norm(name_scope + '_bn', pooled_in_data)
-    reshape = tf.reshape(pooled_in_data, [self.hps.batch_size, -1])
-    dim_in = reshape.get_shape()[1].value
-    #dim_out = out_data.get_shape()[3].value
-    dim_out = 1
-    with tf.variable_scope(name_scope):
-        weights_en  = tf.get_variable(
-            'DW', [dim_in, 1],
-            initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-        bias_en = tf.get_variable('en_b', [1],initializer=tf.constant_initializer(0.0))
-        encoder_mask = tf.matmul(reshape, weights_en) + bias_en #encoder_mask has size (batch_size, 1)
-        encoder_mask = self._batch_norm_vec('mask_bn', encoder_mask)
-    
-    #mask = binaryStochastic_ST(encoder_mask,slope_tensor=slope_tensor, pass_through=False, stochastic=False) #,pass_through=False, 
-    mask = tf.sigmoid(slope_tensor*encoder_mask)
-    tf.summary.histogram('mask',mask)
-    
-    mask = bm.binaryRound(mask)
-    
-    mask_expand = tf.expand_dims(tf.expand_dims(mask,axis=-1),axis=-1)
-    decoder_mask = tf.tile(mask_expand,[1,tf.shape(out_data)[1],tf.shape(out_data)[2],tf.shape(out_data)[3]])   
-    
-    in_filter = in_data.get_shape()[3].value
-    out_filter = out_data.get_shape()[3].value
-    if in_filter != out_filter:
-        in_data = tf.nn.avg_pool(in_data, [1, stride, stride, 1], [1, stride, stride, 1], 'VALID')
-        in_data = tf.pad(
-            in_data, [[0, 0], [0, 0], [0, 0],
-                 [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-    
-    #pre_activation_mask = tf.cond(mask, lambda: out_data, lambda: in_data)
-    pre_activation_mask = tf.add(out_data*decoder_mask,in_data*(1-decoder_mask), name=name_scope +'_mask')
-    #_activation_summary(pre_activation_mask)
-
-    #self.slope_tensor = tf.cond(self.global_step <= 10000, lambda: 1.0 + tf.to_float(self.global_step)/10000, lambda: tf.constant(2.0))
-    #s = tf.cond(self.global_step <= 10000, lambda: 1.0-tf.to_float(self.global_step)*0.75/10000, lambda: tf.constant(0.25))
-    s = 0.4
-    #mask_loss = -tf.reduce_sum(s*tf.log(mask) + (1-s)*tf.log(1-mask))/FLAGS.batch_size    
-    mask_loss = 1.0*tf.reduce_mean(mask)
-    tf.summary.scalar('mask_ratio_initial', mask_loss)
-    
-    mask_show = mask
-    tf.summary.histogram('mask_tensor',mask_show)
-    
-    #mask_loss = tf.abs(mask_loss - s)
-    """    
-    if s >= 0.5:
-        max_loss = s
-    else:
-        max_loss = 1-s
-    self.slope_tensor = -0.5*mask_loss/max_loss + 1
-    """
-        
-    return pre_activation_mask, mask_loss
 
   def _conv_mask(self, in_data, out_data, slope_tensor, stride,name_scope, sparsity = 0.25):
     
@@ -848,17 +498,12 @@ class ResNet(object):
         encoder_mask = tf.matmul(reshape, weights_en) + bias_en #encoder_mask has size (batch_size, 1)
         #encoder_mask = self._batch_norm_vec('mask_bn', encoder_mask)
         tf.summary.histogram(name_scope + '/encoder_mask',encoder_mask)
-    
-    #mask = binaryStochastic_ST(encoder_mask,slope_tensor=slope_tensor, pass_through=False, stochastic=False) #,pass_through=False, 
-    
-    #mask  = tf.minimum(tf.maximum(slope_tensor*encoder_mask, 0), 1)
+
     #mask = (1.5*tf.tanh(encoder_mask) + 0.5*tf.tanh(-3*encoder_mask))/2.0 + 0.5
     mask = tf.sigmoid(slope_tensor*encoder_mask)
     tf.summary.histogram(name_scope + '/mask',mask)
     
     mask = bm.binaryRound(mask)
-    
-    #mask = tf.cond(self.global_step <= 20000, lambda: mask, lambda: mask1)
     #mask = bm.bernoulliSample(mask)
     #tf.summary.histogram(name_scope + '/mask_tensor',mask)
     
@@ -891,302 +536,10 @@ class ResNet(object):
     tf.summary.scalar(name_scope + '/mask_ratio_initial', mask_loss)
 
     
-    #mask_loss = tf.abs(s - mask_loss)
-    #mask_loss = tf.cond(tf.less_equal(mask_loss, 0.05),lambda:tf.constant(0.05),lambda:mask_loss)
-    #mask_loss = -(s*tf.log(mask_loss) + (1-s)*tf.log(1-mask_loss)) + (s*tf.log(s) + (1-s)*tf.log(1-s))
-    """    
-    if s >= 0.5:
-        max_loss = s
-    else:
-        max_loss = 1-s
-    self.slope_tensor = -0.5*mask_loss/max_loss + 1
-    """
-        
+    mask_loss = tf.abs(s - mask_loss)
+
     return pre_activation_mask, mask_loss
 
-  def _conv_mask_v2(self, in_data, slope_tensor ,name_scope, sparsity = 0.25):
-    
-
-    in_data_buf = self._batch_norm(name_scope + '/mask_bn_in', in_data)
-    in_data_buf = self._relu(in_data_buf, self.hps.relu_leakiness)
-    in_data_buf = self._conv(name_scope + '/mask_conv', x=in_data_buf, filter_size=3, in_filters=in_data.get_shape().as_list()[3], out_filters=1, strides=[1,2,2,1])
-    in_data_buf = self._batch_norm(name_scope + '/mask_bn_ou', in_data_buf)
-    in_data_buf = self._relu(in_data_buf, self.hps.relu_leakiness)
-
-    reshape = tf.reshape(in_data_buf, [self.hps.batch_size, -1])
-    dim_in = reshape.get_shape()[1].value
-    #dim_out = out_data.get_shape()[3].value
-    dim_out = 1
-    with tf.variable_scope(name_scope):
-        weights_en  = tf.get_variable(
-            'DW', [dim_in, 1],
-            initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-        bias_en = tf.get_variable('en_b', [1],initializer=tf.constant_initializer(0.0))
-        encoder_mask = tf.matmul(reshape, weights_en) + bias_en #encoder_mask has size (batch_size, 1)
-        encoder_mask = self._batch_norm_vec('mask_bn', encoder_mask)
-        tf.summary.histogram(name_scope + '/encoder_mask',encoder_mask)
-    #mask  = tf.minimum(tf.maximum(slope_tensor*encoder_mask, 0), 1)
-    #mask = (1.5*tf.tanh(encoder_mask) + 0.5*tf.tanh(-3*encoder_mask))/2.0 + 0.5
-
-    #mask = tf.sigmoid(slope_tensor*encoder_mask)
-    mask = (1.5*tf.tanh(encoder_mask) + 0.5*tf.tanh(-3*encoder_mask))/2.0 + 0.5
-    tf.summary.histogram(name_scope + '/mask',mask)
-
-    mask = bm.bernoulliSample(mask)
-    tf.summary.histogram(name_scope + '/mask_tensor',mask)
-    
-    """
-    threshold = tf.cond(self.global_step <= 15000, lambda: 1.0-tf.to_float(self.global_step)*0.51/15000, lambda: tf.constant(0.51))
-    rand = tf.random_uniform(shape=mask.get_shape(), minval=0.0, maxval=threshold, dtype=tf.float32)
-    rand_bin = tf.to_float(tf.less_equal(0.5, rand))
-    mask =  (1-mask)*rand_bin + mask
-    """
-
-    s = sparsity
-    mask_loss = 1.0*tf.reduce_mean(mask)
-    tf.summary.scalar(name_scope + '/mask_ratio_initial', mask_loss)
-    mask_loss = tf.abs(mask_loss - s)
-        
-    return mask, mask_loss
-
-
-  def _conv_mlid_mask(self, in_data, out_data, slope_tensor, name_scope, append_input=False, stride = 1):
-    
-    #in_data_buf = self._batch_norm(name_scope + '/mask_bn_in', in_data)
-    #in_data_buf = self._relu(in_data_buf, self.hps.relu_leakiness)
-    in_data = tf.stop_gradient(in_data)
-    in_data_buf = self._conv(name_scope + '/mask_conv', x=in_data, filter_size=3, in_filters=in_data.get_shape().as_list()[3], out_filters=1, strides=[1,2,2,1])
-    in_data_buf = self._batch_norm(name_scope + '/mask_bn_ou', in_data_buf)
-    in_data_buf = self._relu(in_data_buf, self.hps.relu_leakiness)
-
-    reshape = tf.reshape(in_data_buf, [self.hps.batch_size, -1])
-    dim_in = reshape.get_shape()[1].value
-    dim_out = out_data.get_shape()[3].value
-
-    with tf.variable_scope('encoder'):
-        weights_en  = tf.get_variable(
-            'DW', [dim_in, 4],
-            initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-        biases_en = tf.get_variable(name_scope + 'bias', [4],
-                        initializer=tf.constant_initializer(0.0))
-    #decoder_mask = tf.matmul(reshape, weights_en) + biases_en #encoder_mask has size (batch_size, 1)
-    encoder_mask = tf.tanh(tf.matmul(reshape, weights_en) + biases_en) #encoder_mask has size (batch_size, 1)
-    #encoder_mask = self._relu(tf.matmul(reshape, weights_en) + biases_en, self.hps.relu_leakiness)
-    #encoder_mask = self._batch_norm_vec(name_scope + '/mask_bn', encoder_mask)
-    """
-    """
-    with tf.variable_scope('dencoder'):
-        weights_de  = tf.get_variable(
-            name_scope + 'DW', [4, dim_out],
-            initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-        biases_de = tf.get_variable(name_scope + 'bias', [dim_out],
-                        initializer=tf.constant_initializer(0.0))
-    decoder_mask = tf.matmul(encoder_mask, weights_de) + biases_de #encoder_mask has size (batch_size, 1)
-    
-    mask = tf.sigmoid(slope_tensor*decoder_mask)
-    tf.summary.histogram(name_scope + '/mask',mask)
-    
-    mask = bm.binaryRound(mask)
-    #mask = bm.bernoulliSample(mask)
-    
-    mask_expand = tf.expand_dims(tf.expand_dims(mask,axis=1),axis=1)
-    decoder_mask = tf.tile(mask_expand,[1,tf.shape(out_data)[1],tf.shape(out_data)[2],1])   
-    
-    #pre_activation_mask = tf.multiply(out_data ,decoder_mask, name=name_scope +'_mask')
-    if append_input:
-        in_filter = in_data.get_shape()[3].value
-        out_filter = out_data.get_shape()[3].value
-        if in_filter != out_filter:
-            in_data = tf.nn.avg_pool(in_data, [1, stride, stride, 1], [1, stride, stride, 1], 'VALID')
-            in_data = tf.pad(
-                in_data, [[0, 0], [0, 0], [0, 0],
-                     [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-        pre_activation_mask = tf.add(out_data*decoder_mask,in_data*(1-decoder_mask), name=name_scope +'_mask')
-    else:
-        #pre_activation_mask = tf.multiply(out_data ,decoder_mask, name=name_scope +'_mask')
-        te = tf.cond(self.global_step <= 15000, lambda: 0.5 - 0.5*tf.to_float(self.global_step)/15000, lambda: tf.constant(0.0))
-        pre_activation_mask = tf.add(out_data*decoder_mask,out_data*(1-decoder_mask)*te, name=name_scope +'_mask')
-    
-    s = 0.10
-    
-    avg_s_each_acti = tf.reduce_mean(mask,axis=0)
-    l1 = tf.reduce_mean(tf.abs(avg_s_each_acti - s))
-    tf.summary.scalar(name_scope + '/l1', l1)
-    
-    """
-    avg_s_each_batch = tf.reduce_mean(mask,axis=1)
-    l2 = tf.reduce_mean(tf.abs(avg_s_each_acti - s))
-    tf.summary.scalar(name_scope + '/l2', l2)
-    """
-    """
-    l3 = -tf.reduce_sum(tf.reduce_mean(tf.square(tf.sub(mask, avg_s_each_acti)),axis=0))
-    tf.summary.scalar(name_scope + '/l3', l3)
-    """
-    
-    #l  = tf.abs(s - tf.reduce_mean(mask))
-
-    mask_loss = l1
-    
-    return pre_activation_mask, mask_loss
-
-  def _mlid_mask(self, in_data, out_data, slope_tensor, name_scope, append_input=False, stride = 1):
-    
-    a = in_data.get_shape().as_list()[1]
-    b = in_data.get_shape().as_list()[2]
-    if in_data.get_shape()[3].value >= 256:
-        stride_0 = a
-        stride_1 = b
-    elif in_data.get_shape()[3].value >= 64:
-        stride_0 = a/2
-        stride_1 = b/2
-    else:
-        stride_0 = a/4
-        stride_1 = b/4
-    pooled_in_data = tf.nn.max_pool(in_data,ksize=[1, stride_0, stride_1, 1],strides = [1, stride_0, stride_1, 1], padding='SAME')        
-    
-    reshape = tf.reshape(pooled_in_data, [self.hps.batch_size, -1])
-    dim_in = reshape.get_shape()[1].value
-    
-    dim_out = out_data.get_shape()[3].value
-
-    weights_en  = tf.get_variable(
-        name_scope + '_DW_en', [dim_in, 2],
-        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-    biases_en = tf.get_variable(name_scope + '_en_b', [2],
-                        initializer=tf.constant_initializer())
-    #encoder_mask = tf.sigmoid(tf.matmul(reshape, weights_en) + biases_en) #encoder_mask has size (batch_size, 1)
-    encoder_mask = tf.tanh(tf.matmul(reshape, weights_en) + biases_en) #encoder_mask has size (batch_size, 1)
-    weights_de  = tf.get_variable(
-        name_scope + '_DW_de', [2, dim_out],
-        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-    biases_de = tf.get_variable(name_scope + '_de_b', [dim_out],
-                        initializer=tf.constant_initializer())
-    decoder_mask = tf.matmul(encoder_mask, weights_de) + biases_de #encoder_mask has size (batch_size, 1)
-    mask = binaryStochastic_ST(decoder_mask,slope_tensor=slope_tensor ,pass_through=False, stochastic=False)
-    #mask = binaryStochastic_REINFORCE(decoder_mask, stochastic = False, loss_op_name="loss_by_example")
-    #mask = binaryStochastic_RE(decoder_mask, slope_tensor=slope_tensor, stochastic=False)
-    
-    mask_expand = tf.expand_dims(tf.expand_dims(mask,axis=1),axis=1)
-    decoder_mask = tf.tile(mask_expand,[1,tf.shape(out_data)[1],tf.shape(out_data)[2],1])   
-    
-    #pre_activation_mask = tf.multiply(out_data ,decoder_mask, name=name_scope +'_mask')
-    if append_input:
-        in_filter = in_data.get_shape()[3].value
-        out_filter = out_data.get_shape()[3].value
-        if in_filter != out_filter:
-            in_data = tf.nn.avg_pool(in_data, [1, stride, stride, 1], [1, stride, stride, 1], 'VALID')
-            in_data = tf.pad(
-                in_data, [[0, 0], [0, 0], [0, 0],
-                     [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-        pre_activation_mask = tf.add(out_data*decoder_mask,in_data*(1-decoder_mask), name=name_scope +'_mask')
-    else:
-        pre_activation_mask = tf.multiply(out_data ,decoder_mask, name=name_scope +'_mask')
-
-    #mask_loss = -tf.reduce_sum(s*tf.log(mask) + (1-s)*tf.log(1-mask))/FLAGS.batch_size    
-    mask_loss = 1.0*tf.reduce_mean(mask)
-    tf.summary.scalar('mask_ratio_initial', mask_loss)
-    
-    mask_show = tf.reduce_mean(mask, axis=0)
-    tf.summary.histogram('mask_tensor',mask_show)
-    
-    #s = tf.cond(self.global_step <= 10000, lambda: 1.0-tf.to_float(self.global_step)*0.75/10000, lambda: tf.constant(0.25))
-    s = 0.25
-    mask_loss = tf.abs(mask_loss - s)
-    
-    return pre_activation_mask, mask_loss
-
-
-  def _bottleneck_residual(self, x, in_filter, out_filter, stride,
-                           activate_before_residual=False):
-    """Bottleneck residual unit with 3 sub layers."""
-    if activate_before_residual:
-      with tf.variable_scope('common_bn_relu'):
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-        orig_x = x
-    else:
-      with tf.variable_scope('residual_bn_relu'):
-        orig_x = x
-        x = self._batch_norm('init_bn', x)
-        x = self._relu(x, self.hps.relu_leakiness)
-
-    with tf.variable_scope('sub1'):
-      x = self._conv('conv1', x, 1, in_filter, out_filter/4, stride)
-
-    with tf.variable_scope('sub2'):
-      x = self._batch_norm('bn2', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._conv('conv2', x, 3, out_filter/4, out_filter/4, [1, 1, 1, 1])
-
-    with tf.variable_scope('sub3'):
-      x = self._batch_norm('bn3', x)
-      x = self._relu(x, self.hps.relu_leakiness)
-      x = self._conv('conv3', x, 1, out_filter/4, out_filter, [1, 1, 1, 1])
-
-    with tf.variable_scope('sub_add'):
-      if in_filter != out_filter:
-        orig_x = self._conv('project', orig_x, 1, in_filter, out_filter, stride)
-      x += orig_x
-
-    tf.logging.info('image after unit %s', x.get_shape())
-    return x
-  def _cal_maskloss(self):
-    """Calculating mask loss."""
-    costs = []
-    for var in tf.trainable_variables():
-      if var.op.name.find(r'mask_cal') > 0:
-        costs.append(tf.nn.l2_loss(var))
-        # tf.summary.histogram(var.op.name, var)
-
-  def _decay(self):
-    """L2 weight decay loss."""
-    costs = []
-    for var in tf.trainable_variables():
-      if var.op.name.find(r'DW') > 0:
-        costs.append(tf.nn.l2_loss(var))
-        # tf.summary.histogram(var.op.name, var)
-
-    return tf.multiply(self.hps.weight_decay_rate, tf.add_n(costs))
-
-  def _conv(self, name, x, filter_size, in_filters, out_filters, strides):
-    """Convolution."""
-    with tf.variable_scope(name):
-      n = filter_size * filter_size * out_filters
-      kernel = tf.get_variable(
-          'DW', [filter_size, filter_size, in_filters, out_filters],
-          tf.float32, initializer=tf.random_normal_initializer(
-              stddev=np.sqrt(2.0/n)))
-      return tf.nn.conv2d(x, kernel, strides, padding='SAME')
-
-  def _relu(self, x, leakiness=0.0):
-    """Relu, with optional leaky support."""
-    return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu')
-
-  def _fully_connected(self, x, out_dim):
-    """FullyConnected layer for final output."""
-    x = tf.reshape(x, [self.hps.batch_size, -1])
-    w = tf.get_variable(
-        'DW', [x.get_shape()[1], out_dim],
-        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-    b = tf.get_variable('biases', [out_dim],
-                        initializer=tf.constant_initializer())
-    return tf.nn.xw_plus_b(x, w, b)
-
-  def _fully_connected_v2(self, x, name, out_dim):
-    """FullyConnected layer for final output."""
-    #x = tf.reshape(x, [self.hps.batch_size, -1])
-    with tf.variable_scope(name):
-      w = tf.get_variable(
-        'DW', [x.get_shape()[1], out_dim],
-        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
-      b = tf.get_variable('biases', [out_dim],
-                        initializer=tf.constant_initializer())
-      return tf.nn.xw_plus_b(x, w, b)
-
-  def _global_avg_pool(self, x):
-    assert x.get_shape().ndims == 4
-    return tf.reduce_mean(x, [1, 2])
-  
   def _paral_mask(self, in_data, num_masks, slope_tensor, name_scope, sparsity = 0.25):
     
     in_data = tf.stop_gradient(in_data)
@@ -1240,3 +593,87 @@ class ResNet(object):
     mask_loss = l1
     
     return mask, mask_loss
+
+  def _bottleneck_residual(self, x, in_filter, out_filter, stride,
+                           activate_before_residual=False):
+    """Bottleneck residual unit with 3 sub layers."""
+    if activate_before_residual:
+      with tf.variable_scope('common_bn_relu'):
+        x = self._batch_norm('init_bn', x)
+        x = self._relu(x, self.hps.relu_leakiness)
+        orig_x = x
+    else:
+      with tf.variable_scope('residual_bn_relu'):
+        orig_x = x
+        x = self._batch_norm('init_bn', x)
+        x = self._relu(x, self.hps.relu_leakiness)
+
+    with tf.variable_scope('sub1'):
+      x = self._conv('conv1', x, 1, in_filter, out_filter/4, stride)
+
+    with tf.variable_scope('sub2'):
+      x = self._batch_norm('bn2', x)
+      x = self._relu(x, self.hps.relu_leakiness)
+      x = self._conv('conv2', x, 3, out_filter/4, out_filter/4, [1, 1, 1, 1])
+
+    with tf.variable_scope('sub3'):
+      x = self._batch_norm('bn3', x)
+      x = self._relu(x, self.hps.relu_leakiness)
+      x = self._conv('conv3', x, 1, out_filter/4, out_filter, [1, 1, 1, 1])
+
+    with tf.variable_scope('sub_add'):
+      if in_filter != out_filter:
+        orig_x = self._conv('project', orig_x, 1, in_filter, out_filter, stride)
+      x += orig_x
+
+    tf.logging.info('image after unit %s', x.get_shape())
+    return x
+
+  def _decay(self):
+    """L2 weight decay loss."""
+    costs = []
+    for var in tf.trainable_variables():
+      if var.op.name.find(r'DW') > 0:
+        costs.append(tf.nn.l2_loss(var))
+        # tf.summary.histogram(var.op.name, var)
+
+    return tf.multiply(self.hps.weight_decay_rate, tf.add_n(costs))
+
+  def _conv(self, name, x, filter_size, in_filters, out_filters, strides):
+    """Convolution."""
+    with tf.variable_scope(name):
+      n = filter_size * filter_size * out_filters
+      kernel = tf.get_variable(
+          'DW', [filter_size, filter_size, in_filters, out_filters],
+          tf.float32, initializer=tf.random_normal_initializer(
+              stddev=np.sqrt(2.0/n)))
+      return tf.nn.conv2d(x, kernel, strides, padding='SAME')
+
+  def _relu(self, x, leakiness=0.0):
+    """Relu, with optional leaky support."""
+    return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu')
+
+  def _fully_connected(self, x, out_dim):
+    """FullyConnected layer for final output."""
+    x = tf.reshape(x, [self.hps.batch_size, -1])
+    w = tf.get_variable(
+        'DW', [x.get_shape()[1], out_dim],
+        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
+    b = tf.get_variable('biases', [out_dim],
+                        initializer=tf.constant_initializer())
+    return tf.nn.xw_plus_b(x, w, b)
+
+  def _fully_connected_v2(self, x, name, out_dim):
+    """FullyConnected layer for final output."""
+    #x = tf.reshape(x, [self.hps.batch_size, -1])
+    with tf.variable_scope(name):
+      w = tf.get_variable(
+        'DW', [x.get_shape()[1], out_dim],
+        initializer=tf.uniform_unit_scaling_initializer(factor=1.0))
+      b = tf.get_variable('biases', [out_dim],
+                        initializer=tf.constant_initializer())
+      return tf.nn.xw_plus_b(x, w, b)
+
+  def _global_avg_pool(self, x):
+    assert x.get_shape().ndims == 4
+    return tf.reduce_mean(x, [1, 2])
